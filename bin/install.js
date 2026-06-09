@@ -6501,6 +6501,11 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
       fs.writeFileSync(destPath, jsContent);
     } else if (isQwen && (entry.name.endsWith('.cjs') || entry.name.endsWith('.js'))) {
       let jsContent = fs.readFileSync(srcPath, 'utf8');
+      // Hyphen-name runtime (HYPHEN_NAME_AGENT_RUNTIMES): normalize retired
+      // /gsd:<cmd> colon refs to /gsd-<cmd>. Sibling fixes #3629/#3680/#3685
+      // covered .md surfaces; this closes the same gap for installed .cjs/.js
+      // so colon refs in source comments don't leak into LLM-visible bin/lib.
+      jsContent = transformContentToHyphen(jsContent, readGsdCommandNames());
       jsContent = jsContent.replace(/\.claude\/skills\//g, '.qwen/skills/');
       jsContent = jsContent.replace(/\.claude\//g, '.qwen/');
       jsContent = jsContent.replace(/CLAUDE\.md/g, 'QWEN.md');
@@ -6508,10 +6513,21 @@ function copyWithPathReplacement(srcDir, destDir, pathPrefix, runtime, isCommand
       fs.writeFileSync(destPath, jsContent);
     } else if (isHermes && (entry.name.endsWith('.cjs') || entry.name.endsWith('.js'))) {
       let jsContent = fs.readFileSync(srcPath, 'utf8');
+      // Hyphen-name runtime (HYPHEN_NAME_AGENT_RUNTIMES): see Qwen note above.
+      jsContent = transformContentToHyphen(jsContent, readGsdCommandNames());
       jsContent = jsContent.replace(/\.claude\/skills\//g, '.hermes/skills/');
       jsContent = jsContent.replace(/\.claude\//g, '.hermes/');
       jsContent = jsContent.replace(/CLAUDE\.md/g, 'HERMES.md');
       jsContent = jsContent.replace(/\bClaude Code\b/g, 'Hermes Agent');
+      fs.writeFileSync(destPath, jsContent);
+    } else if (shouldNormalizeHyphenNamespaceInAgentBody(runtime) && (entry.name.endsWith('.cjs') || entry.name.endsWith('.js'))) {
+      // Claude (and any future entry in HYPHEN_NAME_AGENT_RUNTIMES not handled
+      // by an explicit branch above): normalize /gsd:<cmd> -> /gsd-<cmd> in
+      // installed .cjs/.js so source-side colon refs in JS comments don't
+      // reach the hyphen-form skill registration users actually invoke.
+      // Closes the .cjs/.js gap left by .md-only fixes #3629/#3680/#3685.
+      let jsContent = fs.readFileSync(srcPath, 'utf8');
+      jsContent = transformContentToHyphen(jsContent, readGsdCommandNames());
       fs.writeFileSync(destPath, jsContent);
     } else {
       fs.copyFileSync(srcPath, destPath);
@@ -8657,6 +8673,13 @@ function install(isGlobal, runtime = 'claude', options = {}) {
               content = content.replace(/CLAUDE\.md/g, 'HERMES.md');
               content = content.replace(/\bClaude Code\b/g, 'Hermes Agent');
             }
+            // Hyphen-name runtime hooks (claude/qwen/hermes per
+            // HYPHEN_NAME_AGENT_RUNTIMES): normalize /gsd:<cmd> -> /gsd-<cmd>.
+            // Hook .js files emit user-facing strings (statusline update
+            // prompts, update-banner system messages, workflow-guard hints)
+            // that the user copies and runs. Sibling fixes #3629/#3680/#3685
+            // covered .md surfaces; this closes the hook-emitter gap.
+            content = normalizeAgentBodyForRuntime(content, runtime, readGsdCommandNames());
             content = content.replace(/\{\{GSD_VERSION\}\}/g, pkg.version);
             fs.writeFileSync(destFile, content);
             // Ensure hook files are executable (fixes #1162 — missing +x permission)
